@@ -18,7 +18,8 @@ if ($AddMembers) {
     $AddMembers | ForEach-Object {
         try {
             $member = $_
-            $MemberIDs = "https://graph.microsoft.com/v1.0/directoryObjects/" + (New-GraphGetRequest -uri "https://graph.microsoft.com/beta/users/$($_)" -tenantid $Userobj.tenantid).id 
+            if ($member -like '*#EXT#*') { $member = [System.Web.HttpUtility]::UrlEncode($member) }
+            $MemberIDs = "https://graph.microsoft.com/v1.0/directoryObjects/" + (New-GraphGetRequest -uri "https://graph.microsoft.com/beta/users/$($member)" -tenantid $Userobj.tenantid).id 
             $addmemberbody = "{ `"members@odata.bind`": $(ConvertTo-Json @($MemberIDs)) }"
             if ($userobj.groupType -eq "Distribution list" -or $userobj.groupType -eq "Mail-Enabled Security") {
                 $Params = @{ Identity = $userobj.groupid; Member = $member; BypassSecurityGroupManagerCheck = $true }
@@ -47,11 +48,12 @@ if ($AddContacts) {
                 New-ExoRequest -tenantid $Userobj.tenantid -cmdlet "Add-DistributionGroupMember" -cmdParams $params  -UseSystemMailbox $true
                 Write-LogMessage -API $APINAME -tenant $Userobj.tenantid -user $request.headers.'x-ms-client-principal' -message "Added $member to $($userobj.groupid) group" -Sev "Info"
                 $body = $results.add("Success. $member has been added")
-        } else {
-            Write-LogMessage -API $APINAME -tenant $Userobj.tenantid -user $request.headers.'x-ms-client-principal' -message "You cannot add a contact to a security group" -Sev "Error"
-            $body = $results.add("You cannot add a contact to a security group")
+            }
+            else {
+                Write-LogMessage -API $APINAME -tenant $Userobj.tenantid -user $request.headers.'x-ms-client-principal' -message "You cannot add a contact to a security group" -Sev "Error"
+                $body = $results.add("You cannot add a contact to a security group")
+            }
         }
-    }
         catch {
             $body = $results.add("Failed to add member $member to $($userobj.Groupid): $($_.Exception.Message)")
         }
@@ -145,6 +147,29 @@ if ($userobj.allowExternal -eq 'true') {
         Write-LogMessage -user $request.headers.'x-ms-client-principal' -API $APINAME -tenant $Userobj.tenantid -message "Failed to allow external senders for $($userobj.Groupid). $($_.Exception.Message)" -Sev "Error"
     }
 
+}
+
+if ($userobj.sendCopies -eq 'true') {
+    try {
+        $Params = @{ Identity = $userobj.Groupid; subscriptionEnabled = $true; AutoSubscribeNewMembers = $true }
+        New-ExoRequest -tenantid $Userobj.tenantid -cmdlet "Set-UnifiedGroup" -cmdParams $params -useSystemMailbox $true
+
+        $MemberParams = @{ Identity = $userobj.Groupid; LinkType = "members" }
+        $Members = New-ExoRequest -tenantid $Userobj.tenantid -cmdlet "Get-UnifiedGrouplinks" -cmdParams $MemberParams
+
+        $MemberSmtpAddresses = $Members | ForEach-Object { $_.PrimarySmtpAddress }
+
+        $subscriberParams = @{ Identity = $userobj.Groupid; LinkType = "subscribers"; Links = @($MemberSmtpAddresses) }
+        New-ExoRequest -tenantid $Userobj.tenantid -cmdlet "Add-UnifiedGrouplinks" -cmdParams $subscriberParams -Anchor $userobj.mail
+            
+
+        $body = $results.add("Send Copies of team emails and events to team members inboxes for $($userobj.mail) enabled.")
+        Write-LogMessage -user $request.headers.'x-ms-client-principal' -API $APINAME -tenant $Userobj.tenantid -message "Send Copies of team emails and events to team members inboxes for $($userobj.mail) enabled." -Sev "Error"
+    }
+    catch {
+        $body = $results.add("Failed to Send Copies of team emails and events to team members inboxes for $($userobj.mail).")
+        Write-LogMessage -user $request.headers.'x-ms-client-principal' -API $APINAME -tenant $Userobj.tenantid -message "Failed to Send Copies of team emails and events to team members inboxes for $($userobj.mail). $($_.Exception.Message)" -Sev "Error"
+    }
 }
 
 $body = @{"Results" = @($results) }
