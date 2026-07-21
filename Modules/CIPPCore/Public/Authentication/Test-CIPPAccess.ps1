@@ -244,7 +244,11 @@ function Test-CIPPAccess {
                 }
             }
 
-            if ($env:CIPPNG -ne 'true' -and $HasAnyPermission) {
+            # SSO migration requires a working SAM app — suppress the nag until initial
+            # setup is complete (same check GetCippAlerts uses for its setup alert)
+            $SetupCompleted = $env:ApplicationID -and $env:ApplicationID -ne 'LongApplicationID'
+
+            if ($env:CIPPNG -ne 'true' -and $HasAnyPermission -and $SetupCompleted) {
                 try {
                     $SSOTable = Get-CIPPTable -tablename 'SSOMigration'
                     $SSOMigration = Get-CIPPAzDataTableEntity @SSOTable -Filter "PartitionKey eq 'SSO' and RowKey eq 'MigrationConfig'" -ErrorAction SilentlyContinue
